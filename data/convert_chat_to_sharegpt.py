@@ -18,6 +18,15 @@ python convert_chat_to_sharegpt.py \
   --target-id 1583438367 \
   --add-system \
   --max-lines 1000
+  
+minimalist example
+  --input L-弦狼实验室.txt \
+  --output akaxian_sharegpt.jsonl \
+  --target-id 1583438367 \
+  --split 0.9
+Wrote 32765 train samples to: akaxian_sharegpt.train.jsonl
+Wrote 3641 val samples to: akaxian_sharegpt.val.jsonl
+
 """
 
 import argparse
@@ -26,6 +35,7 @@ import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Iterable
 import random
+import unicodedata
 
 # 头部行：时间戳 + 名称(UID)
 HEADER_RE = re.compile(
@@ -48,26 +58,43 @@ MENTION_DUP_RE = re.compile(
 
 def norm_text(s: str) -> str:
     """
-    规范化文本（轻度处理）：
-      - 去首尾空白；
+    清洗文本（用户名/消息正文都用）：
+      - 去掉方括号形式的 U+XXXX 占位（如 [U+202E]）；
+      - 去掉 \\uXXXX 文本转义；
+      - 去掉真实 Unicode 控制字符（含所有 bidi 控制符）；
       - 收敛多余空白；
-      - 折叠连续重复的 @ 提及（例如 "@A @A" -> "@A"）。
-    注意：是否保留图片与黑名单过滤在 should_keep_text 中处理。
+      - 折叠重复 @ 提及。
     """
-    s = s.strip()
     if not s:
         return ''
-    # 收敛多余空白（不破坏名字内空格）
+
+    # 1) 删除 "[U+202E]" 这种占位
+    s = re.sub(r'\[U\+[0-9A-Fa-f]{4,6}\]', '', s)
+    # 2) 删除 "\u202E" 这种转义文本
+    s = re.sub(r'\\u[0-9A-Fa-f]{4}', '', s)
+
+    # 3) 删除真实控制字符
+    cleaned = []
+    for ch in s:
+        cat = unicodedata.category(ch)
+        bidi = unicodedata.bidirectional(ch)
+        if cat.startswith('C'):
+            continue
+        if bidi in ('LRE','RLE','LRO','RLO','PDF','LRI','RLI','FSI','PDI'):
+            continue
+        cleaned.append(ch)
+    s = ''.join(cleaned)
+
+    # 4) 收敛多余空白
     s = re.sub(r'\s+', ' ', s).strip()
 
-    # 折叠连续重复的 @ 提及（支持含空格名字）
+    # 5) 折叠重复 @
     prev = None
     while prev != s:
         prev = s
         s = MENTION_DUP_RE.sub(r'\1', s)
 
     return s
-
 
 def parse_lines(fp: Iterable[str], skip_header_lines: int = 7, max_lines: int = 0) -> Iterable[Dict]:
     """
@@ -108,7 +135,7 @@ def parse_lines(fp: Iterable[str], skip_header_lines: int = 7, max_lines: int = 
                 yield {
                     'ts': ts,
                     'dt': datetime.strptime(ts, TIME_FMT),
-                    'name': name,
+                    'name': norm_text(name),   # <<< 清洗用户名
                     'uid': uid,
                     'text': ''
                 }
@@ -122,7 +149,7 @@ def parse_lines(fp: Iterable[str], skip_header_lines: int = 7, max_lines: int = 
             yield {
                 'ts': ts,
                 'dt': datetime.strptime(ts, TIME_FMT),
-                'name': name,
+                'name': norm_text(name),   # <<< 这里也加
                 'uid': uid,
                 'text': text
             }
@@ -361,6 +388,8 @@ def main():
     # 新增：随机拆分
     parser.add_argument('--split', type=float, default=0.0,
                         help='按比例拆分 train/val，例如 0.9 表示 90% 训练 10% 验证；默认 0 表示不拆分')
+    parser.add_argument('--seed', type=int, default=42,
+                    help='随机种子，用于 train/val 拆分 (默认 42)')
 
     args = parser.parse_args()
     include_names_in_user = not args.no_names
@@ -408,6 +437,8 @@ def main():
 
     # 如果需要拆分
     if args.split and 0 < args.split < 1:
+        if args.seed is not None:
+            random.seed(args.seed)
         random.shuffle(samples)
         split_idx = int(len(samples) * args.split)
         train_samples = samples[:split_idx]
