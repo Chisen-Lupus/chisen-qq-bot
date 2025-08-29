@@ -217,7 +217,7 @@ def pack_user_context(
     target_display_name: str = '赤弦'
 ) -> str:
     """
-    将若干条消息合并为 user 文本。
+    将若干条消息合并为 human 文本。
     - include_names=True 时使用 '昵称: 内容'；若是目标 UID，则统一昵称为 target_display_name（“赤弦”）。
     - 基于 should_keep_text 再过滤一次。
     """
@@ -240,7 +240,7 @@ def pack_assistant_block(
     drop_words: List[str]
 ) -> str:
     """
-    将一段目标角色的连续发言合并为 assistant 文本。
+    将一段目标角色的连续发言合并为 gpt 文本。
     若某条文本为空或被 should_keep_text 过滤（如图片/黑名单），会跳过；全部为空则返回空字符串。
     """
     lines = []
@@ -265,9 +265,9 @@ def build_sharegpt_samples(
     """
     将线性消息流组装为 ShareGPT conversations（时间窗版本）：
       - 连续的 target_uid 消息并块 → assistant。
-      - assistant 前，抓取“在该目标块首条消息时间戳之前 <= time_window_seconds”的消息（**包括赤弦**），
+      - gpt 前，抓取“在该目标块首条消息时间戳之前 <= time_window_seconds”的消息（**包括赤弦**），
         最多 max_context_msgs 条，按时间顺序合并为 user；
-        若消息来自目标 UID，则在 user 端统一用名字“赤弦”。
+        若消息来自目标 UID，则在 human 端统一用名字“赤弦”。
       - 每个样本携带 "ts" = 目标块首条消息时间戳。
     """
     if drop_words is None:
@@ -311,17 +311,20 @@ def build_sharegpt_samples(
         )
 
         # 若两边都为空，跳过
-        if not user_text and not assistant_text:
+        # if not user_text and not assistant_text:
+        if not assistant_text:
             current_target_block = []
             return None
+        if not user_text: 
+            user_text = '随便说点'
 
         conversations = []
         if add_system and system_prompt:
             conversations.append({'from': 'system', 'value': system_prompt})
         if user_text:
-            conversations.append({'from': 'user', 'value': user_text})
+            conversations.append({'from': 'human', 'value': user_text})
         if assistant_text:
-            conversations.append({'from': 'assistant', 'value': assistant_text})
+            conversations.append({'from': 'gpt', 'value': assistant_text})
 
         sample = {
             'ts': first_ts,                 # <<< 为每条样本添加时间戳
@@ -392,7 +395,7 @@ def main():
     parser.add_argument('--drop-words', type=str, default='', help='逗号分隔的黑名单词汇，完全匹配则丢弃，如："已撤回,广告,无意义"')
 
     # 组织形式
-    parser.add_argument('--no-names', action='store_true', help='user 文本不带昵称前缀（默认带昵称: 内容）')
+    parser.add_argument('--no-names', action='store_true', help='human 文本不带昵称前缀（默认带昵称: 内容）')
     parser.add_argument('--add-system', action='store_true', help='每条样本最前加入 system 提示')
     parser.add_argument('--system', default='你现在扮演角色"赤弦",自称赤弦.',
                         help='system 提示内容（默认已按需求修改）')
@@ -434,14 +437,14 @@ def main():
             drop_words=drop_words,
         )
 
-        # 收集样本并在 user 端添加 value_lines（assistant 不加）
+        # 收集样本并在 human 端添加 value_lines（assistant 不加）
         samples = []
         for sample in samp_iter:
             for conv in sample['conversations']:
                 if isinstance(conv.get('value'), str):
                     lines = conv['value'].split('\n')
-                    if conv.get('from') == 'user' and len(lines) > 1:
-                        conv['value_lines'] = lines  # 仅 user 添加
+                    if conv.get('from') == 'human' and len(lines) > 1:
+                        conv['value_lines'] = lines  # 仅 human 添加
                         # 原 value 里可以保持换行（\n 字符）；不要用 indent 导致多行输出
                         conv['value'] = '\n'.join(lines)
                     else:
