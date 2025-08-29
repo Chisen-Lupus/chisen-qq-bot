@@ -36,6 +36,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple, Iterable
 import random
 import unicodedata
+import os
 
 # 头部行：时间戳 + 名称(UID)
 HEADER_RE = re.compile(
@@ -358,6 +359,20 @@ def build_sharegpt_samples(
         if sample:
             yield sample
 
+def write_jsonl(path, samples):
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        for s in samples:
+            # 严格 JSONL：单行一个对象，不使用 indent
+            f.write(json.dumps(s, ensure_ascii=False) + '\n')
+
+def write_preview(path, samples, indent=2):
+    # 仅供人工查看的漂亮版（不是 JSONL）
+    with open(path, 'w', encoding='utf-8') as f:
+        for s in samples:
+            f.write(json.dumps(s, ensure_ascii=False, indent=indent))
+            f.write('\n')  # 以空行分隔对象，方便浏览
+            
 def main():
     parser = argparse.ArgumentParser(
         description='Convert QQ-like chat logs (header+content lines) to ShareGPT JSONL (time-window context, with target history allowed in context).'
@@ -386,15 +401,17 @@ def main():
     parser.add_argument('--max-samples', type=int, default=0, help='最多输出多少条样本，0 表示不限制')
 
     # 新增：随机拆分
+
     parser.add_argument('--split', type=float, default=0.0,
-                        help='按比例拆分 train/val，例如 0.9 表示 90% 训练 10% 验证；默认 0 表示不拆分')
-    parser.add_argument('--seed', type=int, default=42,
-                    help='随机种子，用于 train/val 拆分 (默认 42)')
+                        help='按比例拆分 train/val，例如 0.9 表示 90%/10%；0 表示不拆分')
+    parser.add_argument('--seed', type=int, default=42, help='随机种子，用于 train/val 拆分')
+    parser.add_argument('--preview', action='store_true',
+                        help='额外输出一个 .preview.json（漂亮版，仅供人工检查，不用于训练）')
 
     args = parser.parse_args()
     include_names_in_user = not args.no_names
 
-    # 解析黑名单词汇
+    # 解析黑名单
     drop_words = []
     if args.drop_words.strip():
         drop_words = [w.strip() for w in args.drop_words.split(',') if w.strip()]
@@ -417,51 +434,49 @@ def main():
             drop_words=drop_words,
         )
 
-        # 收集样本
+        # 收集样本并在 user 端添加 value_lines（assistant 不加）
         samples = []
         for sample in samp_iter:
             for conv in sample['conversations']:
                 if isinstance(conv.get('value'), str):
                     lines = conv['value'].split('\n')
                     if conv.get('from') == 'user' and len(lines) > 1:
-                        conv['value_lines'] = lines
-                        lines_indented = [lines[0]] + [ln for ln in lines[1:]]
-                        conv['value'] = '\n'.join(lines_indented)
+                        conv['value_lines'] = lines  # 仅 user 添加
+                        # 原 value 里可以保持换行（\n 字符）；不要用 indent 导致多行输出
+                        conv['value'] = '\n'.join(lines)
                     else:
-                        if len(lines) > 1:
-                            lines_indented = [lines[0]] + [ln for ln in lines[1:]]
-                            conv['value'] = '\n'.join(lines_indented)
+                        conv['value'] = '\n'.join(lines)
             samples.append(sample)
             if args.max_samples and len(samples) >= args.max_samples:
                 break
 
-    # 如果需要拆分
+    # 随机拆分（可复现）
     if args.split and 0 < args.split < 1:
-        if args.seed is not None:
-            random.seed(args.seed)
+        random.seed(args.seed)
         random.shuffle(samples)
-        split_idx = int(len(samples) * args.split)
-        train_samples = samples[:split_idx]
-        val_samples = samples[split_idx:]
+        k = int(len(samples) * args.split)
+        train_samples, val_samples = samples[:k], samples[k:]
 
-        train_path = args.output[:-6] + '.train.jsonl'
-        val_path = args.output[:-6] + '.val.jsonl'
+        train_path = args.output + '.train.jsonl'
+        val_path   = args.output + '.val.jsonl'
+        write_jsonl(train_path, train_samples)
+        write_jsonl(val_path,   val_samples)
+        print(f'Wrote {len(train_samples)} train to {train_path}')
+        print(f'Wrote {len(val_samples)} val   to {val_path}')
 
-        with open(train_path, 'w', encoding='utf-8') as f_train:
-            for s in train_samples:
-                f_train.write(json.dumps(s, ensure_ascii=False, indent=2) + '\n')
-        with open(val_path, 'w', encoding='utf-8') as f_val:
-            for s in val_samples:
-                f_val.write(json.dumps(s, ensure_ascii=False, indent=2) + '\n')
-
-        print(f'Wrote {len(train_samples)} train samples to: {train_path}')
-        print(f'Wrote {len(val_samples)} val samples to: {val_path}')
+        if args.preview:
+            write_preview(args.output + '.train.preview.json', train_samples)
+            write_preview(args.output + '.val.preview.json',   val_samples)
+            print('Preview files written (pretty JSON, not for training).')
     else:
-        # 不拆分，写单个文件
-        with open(args.output, 'w', encoding='utf-8') as f_out:
-            for s in samples:
-                f_out.write(json.dumps(s, ensure_ascii=False, indent=2) + '\n')
-        print(f'Wrote {len(samples)} ShareGPT samples to: {args.output}')
+        # 不拆分：单文件严格 JSONL
+        out_path = args.output + '.jsonl'
+        write_jsonl(out_path, samples)
+        print(f'Wrote {len(samples)} samples to {out_path}')
+        if args.preview:
+            write_preview(args.output + '.preview.json', samples)
+            print('Preview file written (pretty JSON, not for training).')
+
         
 if __name__ == '__main__':
     main()
