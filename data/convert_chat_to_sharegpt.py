@@ -20,12 +20,13 @@ python convert_chat_to_sharegpt.py \
   --max-lines 1000
   
 minimalist example
-  --input L-弦狼实验室.txt \
-  --output akaxian_sharegpt.jsonl \
+python data/convert_chat_to_sharegpt.py \
+  --input data/L-弦狼实验室.txt \
+  --output data/akaxian_sharegpt \
   --target-id 1583438367 \
-  --split 0.9
-Wrote 32765 train samples to: akaxian_sharegpt.train.jsonl
-Wrote 3641 val samples to: akaxian_sharegpt.val.jsonl
+  --split 0.9 \
+  --add-system \
+  --preview     
 
 """
 
