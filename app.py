@@ -9,6 +9,8 @@ import requests
 from flask import Flask, request, jsonify
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from generate_ai_response import generate_ai_response
+
 # ========= 环境变量 =========
 APPID     = os.getenv('QQ_BOT_APPID', '').strip()
 APPSECRET = os.getenv('QQ_BOT_APPSECRET', '').strip()  # 机器人密钥(Bot Secret)
@@ -85,33 +87,58 @@ def reply_group_message(group_openid: str, content: str, msg_id: str):
 
 # ========= 事件处理 =========
 def handle_event(envelope: dict):
-    t = envelope.get("t")
-    d = envelope.get("d", {}) or {}
-    print("[EVENT] t=", t)
+    t = envelope.get('t')
+    d = envelope.get('d', {}) or {}
+    print('[EVENT] t=', t)
 
     # 频道内 @ 机器人
-    if t == "AT_MESSAGE_CREATE":
-        content    = d.get("content", "")
-        channel_id = d.get("channel_id")
-        msg_id     = d.get("id")
+    if t == 'AT_MESSAGE_CREATE':
+        content    = d.get('content', '')
+        channel_id = d.get('channel_id')
+        msg_id     = d.get('id')
         cmd = normalize_command(content)
-        print("[EVENT][GUILD] payload:", {"channel_id": channel_id, "raw": content, "cmd": cmd})
-        if cmd.startswith("/今天的日期") and channel_id and msg_id:
+        print('[EVENT][GUILD] payload:', {'channel_id': channel_id, 'raw': content, 'cmd': cmd})
+
+        # 1) 保留 /今天的日期
+        if cmd.startswith('/今天的日期') and channel_id and msg_id:
             now = datetime.now()
-            reply_channel_message(channel_id, f"今天是 {now:%Y-%m-%d %H:%M:%S}.", msg_id)
+            reply_channel_message(channel_id, f'今天是 {now:%Y-%m-%d %H:%M:%S}.', msg_id)
+            return
+
+        # 2) 非斜杠指令 => 走 AI 回复
+        if channel_id and msg_id and not cmd.startswith('/'):
+            try:
+                ai_text = generate_ai_response(cmd)
+            except Exception as e:
+                print('[ERROR] ai_response:', repr(e))
+                ai_text = '（赤弦打了个喷嚏，刚刚没接住思路…再说一遍？）'
+            reply_channel_message(channel_id, ai_text, msg_id)
         return
 
     # QQ群内 @ 机器人
-    if t == "GROUP_AT_MESSAGE_CREATE":
-        content       = d.get("content", "")
-        group_openid  = d.get("group_openid") or d.get("group_id")
-        msg_id        = d.get("id")
+    if t == 'GROUP_AT_MESSAGE_CREATE':
+        content       = d.get('content', '')
+        group_openid  = d.get('group_openid') or d.get('group_id')
+        msg_id        = d.get('id')
         cmd = normalize_command(content)
-        print("[EVENT][GROUP] payload:", {"group_openid": group_openid, "raw": content, "cmd": cmd})
-        if cmd.startswith("/今天的日期") and group_openid and msg_id:
+        print('[EVENT][GROUP] payload:', {'group_openid': group_openid, 'raw': content, 'cmd': cmd})
+
+        # 1) 保留 /今天的日期
+        if cmd.startswith('/今天的日期') and group_openid and msg_id:
             now = datetime.now()
-            reply_group_message(group_openid, f"今天是 {now:%Y-%m-%d %H:%M:%S}.", msg_id)
+            reply_group_message(group_openid, f'今天是 {now:%Y-%m-%d %H:%M:%S}.', msg_id)
+            return
+
+        # 2) 非斜杠指令 => 走 AI 回复
+        if group_openid and msg_id and not cmd.startswith('/'):
+            try:
+                ai_text = generate_ai_response(cmd)
+            except Exception as e:
+                print('[ERROR] ai_response:', repr(e))
+                ai_text = '（赤弦脑袋暂时短路了…要不你换种说法？）'
+            reply_group_message(group_openid, ai_text, msg_id)
         return
+
 
 # ========= 路由：/qq/webhook（保持与你的反代一致） =========
 @app.route("/qq/webhook", methods=["POST"])
