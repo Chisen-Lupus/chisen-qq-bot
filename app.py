@@ -11,6 +11,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from generate_ai_response import generate_ai_response
 
+import sys
+
+log_path = "/home/yichenliu/chisen-qq-bot/qqbot.log"
+sys.stdout = open(log_path, "a", buffering=1)  # 行缓冲
+sys.stderr = open(log_path, "a", buffering=1)
+
+
 # ========= 环境变量 =========
 APPID     = os.getenv('QQ_BOT_APPID', '').strip()
 APPSECRET = os.getenv('QQ_BOT_APPSECRET', '').strip()  # 机器人密钥(Bot Secret)
@@ -141,7 +148,7 @@ def handle_event(envelope: dict):
 
 
 # ========= 路由：/qq/webhook（保持与你的反代一致） =========
-@app.route("/qq/webhook", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def qq_webhook():
     raw = request.get_data(as_text=True)
     try:

@@ -5,7 +5,8 @@ from peft import PeftModel
 
 # ---- 可按需修改 ----
 BASE_MODEL = 'Qwen/Qwen2.5-7B-Instruct'
-ADAPTER    = 'outputs/qwen7b_lora_mps_run1/checkpoint-200'
+ADAPTER    = 'models/run1-lr1e-5-save400'
+
 DEVICE     = 'cpu'  # 或 'mps'
 
 # ---- 全局: 懒加载，避免每次请求都重新加载模型 ----
@@ -61,9 +62,10 @@ def generate_ai_response(user_text: str) -> str:
     with torch.no_grad():
         out = _model.generate(
             **inputs,
-            max_new_tokens=256,
+            min_new_tokens=16,
+            max_new_tokens=64,
             do_sample=True,
-            temperature=0.7,
+            temperature=0.9,
             top_p=0.9,
             repetition_penalty=1.2,
             eos_token_id=_eos_id,
